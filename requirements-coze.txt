@@ -1,0 +1,4 @@
+# 可选：仅在 Coze 云端或已安装对应包时使用 scripts/load_env.py
+# pip install -r requirements-coze.txt
+# 包名以你当前 Coze SDK 为准，下列为占位
+# coze-workload-identity

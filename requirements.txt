@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-dotenv
+requests
+beautifulsoup4
+langchain
+langchain-classic
+langchain-core
+langchain-text-splitters
+langchain-openai
+langchain-community
+langchain-huggingface
+sentence-transformers
+faiss-cpu
+tiktoken

@@ -1,0 +1,25 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Secrets & local env
+.env
+.env.local
+
+# IDE
+.idea/
+
+# RAG / crawl outputs（体积大或由脚本生成；需入库可改用 Git LFS 或删掉对应行）
+data/kb/
+data/raw_pages.jsonl
+backend/data/kb/
+backend/data/raw_pages.jsonl
