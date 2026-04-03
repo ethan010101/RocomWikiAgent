@@ -37,6 +37,38 @@
       .bot {
         background: #f0f3f8;
       }
+      .stream-status {
+        font-size: 13px;
+        color: #666;
+        margin-bottom: 8px;
+      }
+      details.reasoning {
+        margin-top: 8px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #fff;
+        border: 1px solid #dde3ee;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #334;
+      }
+      details.reasoning summary {
+        cursor: pointer;
+        font-weight: 600;
+        color: #1a4a8c;
+      }
+      .reasoning-body {
+        margin-top: 8px;
+        white-space: pre-wrap;
+      }
+      .answer-body {
+        margin-top: 10px;
+        white-space: pre-wrap;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
       .input-row {
         display: flex;
         gap: 10px;
@@ -81,22 +113,104 @@
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
+      function beginStreamBot() {
+        const wrap = document.createElement("div");
+        wrap.className = "msg bot";
+        const statusEl = document.createElement("div");
+        statusEl.className = "stream-status";
+        statusEl.textContent = "正在检索…";
+        const details = document.createElement("details");
+        details.className = "reasoning";
+        details.open = true;
+        const sum = document.createElement("summary");
+        sum.textContent = "思考过程（reasoning_content 流）";
+        const reasoningEl = document.createElement("div");
+        reasoningEl.className = "reasoning-body";
+        details.appendChild(sum);
+        details.appendChild(reasoningEl);
+        const head = document.createElement("div");
+        head.textContent = "助手：";
+        head.style.fontWeight = "600";
+        head.style.marginTop = "10px";
+        const answerEl = document.createElement("div");
+        answerEl.className = "answer-body";
+        wrap.appendChild(statusEl);
+        wrap.appendChild(details);
+        wrap.appendChild(head);
+        wrap.appendChild(answerEl);
+        chatBox.appendChild(wrap);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        return { statusEl, details, reasoningEl, answerEl };
+      }
+
       async function sendMessage() {
         const msg = inputText.value.trim();
         if (!msg) return;
         addMessage("user", `你：${msg}`);
         inputText.value = "";
+        sendBtn.disabled = true;
+
+        const { statusEl, details, reasoningEl, answerEl } = beginStreamBot();
+        let sseBuf = "";
 
         try {
-          const res = await fetch("http://127.0.0.1:8000/chat", {
+          const res = await fetch("http://127.0.0.1:8000/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: msg }),
           });
-          const data = await res.json();
-          addMessage("bot", `助手：${data.answer}`);
+          if (!res.ok) {
+            statusEl.textContent = "请求失败（HTTP " + res.status + "）";
+            sendBtn.disabled = false;
+            return;
+          }
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            sseBuf += dec.decode(value, { stream: true });
+            let sep;
+            while ((sep = sseBuf.indexOf("\n\n")) >= 0) {
+              const block = sseBuf.slice(0, sep).trim();
+              sseBuf = sseBuf.slice(sep + 2);
+              if (!block.startsWith("data:")) continue;
+              const line = block.replace(/^data:\s?/, "");
+              let data;
+              try {
+                data = JSON.parse(line);
+              } catch {
+                continue;
+              }
+              if (data.type === "status") {
+                statusEl.textContent = data.message || "";
+              } else if (data.type === "reasoning") {
+                reasoningEl.textContent += data.delta || "";
+              } else if (data.type === "content") {
+                statusEl.textContent = "";
+                answerEl.textContent += data.delta || "";
+              } else if (data.type === "error") {
+                statusEl.textContent = data.message || "出错";
+              } else if (data.type === "done") {
+                statusEl.textContent = "";
+              }
+              chatBox.scrollTop = chatBox.scrollHeight;
+            }
+          }
         } catch (e) {
-          addMessage("bot", "助手：请求失败，请确认后端已启动。");
+          statusEl.textContent = "请求失败，请确认后端已启动。";
+        } finally {
+          if (!reasoningEl.textContent.trim()) {
+            details.remove();
+          }
+          if (
+            !answerEl.textContent.trim() &&
+            !(statusEl.textContent && statusEl.textContent.trim())
+          ) {
+            answerEl.textContent = "（无回答）";
+          }
+          sendBtn.disabled = false;
+          chatBox.scrollTop = chatBox.scrollHeight;
         }
       }
 

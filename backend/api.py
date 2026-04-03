@@ -1,7 +1,9 @@
+import json
 import logging
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.agent import build_agent
@@ -57,3 +59,32 @@ def chat(req: ChatRequest):
         )
     result = agent_executor.invoke({"input": req.message})
     return ChatResponse(answer=result.get("output", "未获取到回答"))
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """SSE：data 为 JSON。type=status | reasoning | content | error | done"""
+    if agent_executor is None:
+        raise HTTPException(
+            status_code=503,
+            detail="知识库未就绪。请在项目根目录执行: python backend/build_kb.py",
+        )
+
+    async def event_gen():
+        try:
+            async for evt in agent_executor.astream_sse_payloads(req.message):
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("chat_stream failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

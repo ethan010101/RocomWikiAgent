@@ -8,6 +8,7 @@ langchain-classic
 langchain-core
 langchain-text-splitters
 langchain-openai
+openai>=1.0.0
 langchain-community
 langchain-huggingface
 sentence-transformers

@@ -169,8 +169,21 @@ def build_agent():
     )
 
     class _RAGRunner:
+        def __init__(self) -> None:
+            self._retriever = retriever
+            self._vectorstore = vectorstore
+            self._prompt = prompt
+            self._llm = llm
+            self._chain = chain
+
         def invoke(self, data: dict) -> dict:
-            text = chain.invoke({"input": data.get("input", "")})
+            text = self._chain.invoke({"input": data.get("input", "")})
             return {"output": text}
+
+        async def astream_sse_payloads(self, user_input: str):
+            from backend.chat_stream import iter_rag_stream_events
+
+            async for evt in iter_rag_stream_events(self, user_input):
+                yield evt
 
     return _RAGRunner()
