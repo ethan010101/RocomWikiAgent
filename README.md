@@ -75,20 +75,18 @@ uvicorn backend.api:app --reload --host 127.0.0.1 --port 8000
 
 接口：
 
+- `GET /`：对话 Web 页（同机静态资源 `/assets`）
 - `GET /health`
 - `POST /chat`，请求体：`{"message":"你的问题"}`
+- `POST /chat/stream`：SSE 流式对话（含 `reasoning_content` 等，供页面使用）
 
-## 5) 启动 Web 页面
+## 5) 打开 Web 页面
 
-在另一个终端运行（在项目根目录）：
+启动后端后，在浏览器打开：
 
-```bash
-python -m http.server 5500
-```
+`http://127.0.0.1:8000/`
 
-浏览器打开：
-
-`http://127.0.0.1:5500/frontend/index.html`
+（与 API 同一地址，无需再开 `http.server` 或 Live Server。）
 
 ## 6) 说明
 

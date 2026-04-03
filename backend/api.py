@@ -1,16 +1,29 @@
 import json
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.agent import build_agent
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_FRONTEND_DIR = _PROJECT_ROOT / "frontend"
+_ASSETS_DIR = _FRONTEND_DIR / "assets"
+
 app = FastAPI(title="Rocom Wiki Assistant API")
+
+if _ASSETS_DIR.is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_ASSETS_DIR)),
+        name="assets",
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +56,15 @@ def startup_event():
             "Agent not started: %s — 请先运行: python backend/build_kb.py",
             e,
         )
+
+
+@app.get("/")
+def serve_index():
+    """浏览器访问 http://127.0.0.1:8000/ 加载对话页（静态图走 /assets/）。"""
+    index = _FRONTEND_DIR / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=404, detail="frontend/index.html 不存在")
+    return FileResponse(index)
 
 
 @app.get("/health")

@@ -4,38 +4,184 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>洛克王国 Wiki 智能助手</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" type="image/png" href="" id="appFavicon" />
     <style>
       body {
         margin: 0;
         font-family: Arial, sans-serif;
-        background: #f5f7fb;
+        background: #e8ecf4;
         color: #222;
+      }
+      .app-shell {
+        display: flex;
+        min-height: 100vh;
+        align-items: stretch;
+      }
+      .sidebar {
+        width: 260px;
+        flex-shrink: 0;
+        background: #1e2a4a;
+        color: #e8edf7;
+        display: flex;
+        flex-direction: column;
+        padding: 16px 12px;
+        box-sizing: border-box;
+      }
+      .sidebar-brand {
+        font-size: 14px;
+        font-weight: 600;
+        padding: 8px 10px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        margin-bottom: 12px;
+      }
+      .nav-btn {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+        border: none;
+        border-radius: 8px;
+        background: #2b6cff;
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .nav-btn:hover {
+        filter: brightness(1.08);
+      }
+      .nav-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .nav-btn.secondary {
+        background: rgba(255, 255, 255, 0.1);
+        color: #e8edf7;
+      }
+      .nav-btn.secondary:hover {
+        background: rgba(255, 255, 255, 0.16);
+      }
+      .sidebar-section-title {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: rgba(255, 255, 255, 0.45);
+        padding: 12px 10px 8px;
+      }
+      .history-list {
+        flex: 1;
+        overflow-y: auto;
+        margin: 0 -4px;
+        padding: 0 4px;
+      }
+      .history-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 10px 10px;
+        margin-bottom: 4px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: #e8edf7;
+        font-size: 13px;
+        cursor: pointer;
+        line-height: 1.35;
+      }
+      .history-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .history-item.active {
+        background: rgba(43, 108, 255, 0.35);
+      }
+      .history-item-title {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .history-item-time {
+        display: block;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.4);
+        margin-top: 4px;
+      }
+      .main-area {
+        flex: 1;
+        min-width: 0;
+        padding: 20px;
+        overflow: auto;
       }
       .container {
         max-width: 900px;
         margin: 0 auto;
-        padding: 20px;
+      }
+      .app-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 16px;
+      }
+      .app-header .logo-header {
+        height: 48px;
+        width: auto;
+        max-width: 160px;
+        object-fit: contain;
+        flex-shrink: 0;
+      }
+      .app-header h2 {
+        margin: 0;
+        font-size: 1.35rem;
+        line-height: 1.25;
       }
       .chat-box {
         background: #fff;
         border-radius: 12px;
         padding: 16px;
         min-height: 420px;
+        max-height: min(72vh, 900px);
         border: 1px solid #ddd;
+        overflow-x: hidden;
         overflow-y: auto;
       }
-      .msg {
-        margin: 8px 0;
-        padding: 10px 12px;
-        border-radius: 10px;
+      .msg-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 12px 0;
+        width: 100%;
+      }
+      .msg-row.user {
+        flex-direction: row-reverse;
+      }
+      .msg-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        object-fit: cover;
+        flex-shrink: 0;
+        border: 1px solid #e0e4ee;
+        background: #fff;
+      }
+      .msg-bubble {
+        flex: 0 1 auto;
+        width: fit-content;
+        max-width: min(100em, 100%);
+        min-width: 0;
+        padding: 10px 14px;
+        border-radius: 14px;
         white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        box-sizing: border-box;
       }
-      .user {
+      .msg-bubble.user {
         background: #dff0ff;
+        border: 1px solid #c8e6ff;
       }
-      .bot {
+      .msg-bubble.bot {
         background: #f0f3f8;
+        border: 1px solid #e2e6ef;
       }
       .stream-status {
         font-size: 13px;
@@ -51,6 +197,8 @@
         font-size: 13px;
         line-height: 1.5;
         color: #334;
+        max-width: 100%;
+        box-sizing: border-box;
       }
       details.reasoning summary {
         cursor: pointer;
@@ -60,10 +208,16 @@
       .reasoning-body {
         margin-top: 8px;
         white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        max-width: 100%;
       }
       .answer-body {
         margin-top: 10px;
         white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        max-width: 100%;
       }
       button:disabled {
         opacity: 0.55;
@@ -91,31 +245,227 @@
     </style>
   </head>
   <body>
-    <div class="container">
-      <h2>洛克王国 Wiki 智能助手</h2>
-      <div id="chatBox" class="chat-box"></div>
-      <div class="input-row">
-        <input id="inputText" placeholder="输入问题，例如：雨天队推荐核心精灵有哪些？" />
-        <button id="sendBtn">发送</button>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="导航">
+        <div class="sidebar-brand">洛克 Wiki 助手</div>
+        <button type="button" class="nav-btn" id="btnNewChat">＋ 新增对话</button>
+        <div class="sidebar-section-title">历史对话</div>
+        <div class="history-list" id="historyList"></div>
+      </aside>
+      <div class="main-area">
+        <div class="container">
+          <header class="app-header">
+            <img
+              class="logo-header"
+              id="appLogo"
+              src=""
+              alt="洛克王国 Wiki"
+              width="160"
+              height="48"
+            />
+            <h2>洛克王国 Wiki 智能助手</h2>
+          </header>
+          <div id="chatBox" class="chat-box"></div>
+          <div class="input-row">
+            <input id="inputText" placeholder="输入问题，例如：雨天队推荐核心精灵有哪些？" />
+            <button id="sendBtn">发送</button>
+          </div>
+        </div>
       </div>
     </div>
 
     <script>
+      // file:// 打开时用相对路径；通过 http://127.0.0.1:8000/ 打开时用后端挂载的 /assets/
+      const ASSET_BASE =
+        location.protocol === "file:" ? "assets/" : "/assets/";
+
+      (function initAssets() {
+        const fav = document.getElementById("appFavicon");
+        if (fav) fav.href = ASSET_BASE + "favicon.png";
+        const logo = document.getElementById("appLogo");
+        if (logo) {
+          logo.src = ASSET_BASE + "header.png";
+          logo.addEventListener("error", () => {
+            logo.style.display = "none";
+          });
+        }
+      })();
+
+      const LS_CONV = "rocomWiki_conversations_v1";
+      const LS_CURRENT = "rocomWiki_current_conv_id";
+
       const chatBox = document.getElementById("chatBox");
       const inputText = document.getElementById("inputText");
       const sendBtn = document.getElementById("sendBtn");
+      const historyList = document.getElementById("historyList");
+      const btnNewChat = document.getElementById("btnNewChat");
+
+      let conversations = [];
+      let currentConvId = null;
+
+      const ASSET_USER = ASSET_BASE + "user.png";
+      const ASSET_BOT = ASSET_BASE + "bot.jpg";
+
+      function hideBrokenImg(img) {
+        img.addEventListener("error", () => {
+          img.style.display = "none";
+        });
+      }
+
+      function loadConversations() {
+        try {
+          const raw = localStorage.getItem(LS_CONV);
+          conversations = raw ? JSON.parse(raw) : [];
+          if (!Array.isArray(conversations)) conversations = [];
+        } catch {
+          conversations = [];
+        }
+      }
+
+      function saveConversations() {
+        localStorage.setItem(LS_CONV, JSON.stringify(conversations));
+        renderHistoryList();
+      }
+
+      function formatTime(ts) {
+        const d = new Date(ts);
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+
+      function renderHistoryList() {
+        historyList.innerHTML = "";
+        const sorted = [...conversations].sort(
+          (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)
+        );
+        if (!sorted.length) {
+          const empty = document.createElement("div");
+          empty.style.cssText =
+            "padding:12px 10px;font-size:12px;color:rgba(255,255,255,0.35);";
+          empty.textContent = "暂无记录，开始新对话吧";
+          historyList.appendChild(empty);
+          return;
+        }
+        for (const c of sorted) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className =
+            "history-item" + (c.id === currentConvId ? " active" : "");
+          btn.dataset.id = c.id;
+          const t = document.createElement("span");
+          t.className = "history-item-title";
+          t.textContent = c.title || "未命名对话";
+          const tm = document.createElement("span");
+          tm.className = "history-item-time";
+          tm.textContent = formatTime(c.updatedAt || Date.now());
+          btn.appendChild(t);
+          btn.appendChild(tm);
+          btn.addEventListener("click", () => openConversation(c.id));
+          historyList.appendChild(btn);
+        }
+      }
+
+      function clearChatUi() {
+        chatBox.innerHTML = "";
+      }
 
       function addMessage(role, text) {
-        const div = document.createElement("div");
-        div.className = `msg ${role}`;
-        div.textContent = text;
-        chatBox.appendChild(div);
+        const row = document.createElement("div");
+        row.className = `msg-row ${role}`;
+        const av = document.createElement("img");
+        av.className = "msg-avatar";
+        av.src = role === "user" ? ASSET_USER : ASSET_BOT;
+        av.alt = role === "user" ? "我" : "助手";
+        hideBrokenImg(av);
+        const bubble = document.createElement("div");
+        bubble.className = `msg-bubble ${role}`;
+        bubble.textContent = text;
+        row.appendChild(av);
+        row.appendChild(bubble);
+        chatBox.appendChild(row);
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
-      function beginStreamBot() {
+      function appendAssistantStatic(reasoning, answer) {
+        const row = document.createElement("div");
+        row.className = "msg-row bot";
+        const av = document.createElement("img");
+        av.className = "msg-avatar";
+        av.src = ASSET_BOT;
+        av.alt = "助手";
+        hideBrokenImg(av);
         const wrap = document.createElement("div");
-        wrap.className = "msg bot";
+        wrap.className = "msg-bubble bot";
+        const r = (reasoning || "").trim();
+        if (r) {
+          const details = document.createElement("details");
+          details.className = "reasoning";
+          details.open = false;
+          const sum = document.createElement("summary");
+          sum.textContent = "思考过程（reasoning_content 流）";
+          const reasoningEl = document.createElement("div");
+          reasoningEl.className = "reasoning-body";
+          reasoningEl.textContent = r;
+          details.appendChild(sum);
+          details.appendChild(reasoningEl);
+          wrap.appendChild(details);
+        }
+        const head = document.createElement("div");
+        head.textContent = "助手：";
+        head.style.fontWeight = "600";
+        head.style.marginTop = "10px";
+        const answerEl = document.createElement("div");
+        answerEl.className = "answer-body";
+        answerEl.textContent = answer || "（无回答）";
+        wrap.appendChild(head);
+        wrap.appendChild(answerEl);
+        row.appendChild(av);
+        row.appendChild(wrap);
+        chatBox.appendChild(row);
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      function renderConversationMessages(conv) {
+        clearChatUi();
+        if (!conv || !conv.messages) return;
+        for (const m of conv.messages) {
+          if (m.type === "user") {
+            addMessage("user", m.text || "");
+          } else if (m.type === "assistant") {
+            appendAssistantStatic(m.reasoning || "", m.answer || "");
+          }
+        }
+      }
+
+      function openConversation(id) {
+        if (sendBtn.disabled) return;
+        const conv = conversations.find((c) => c.id === id);
+        if (!conv) return;
+        currentConvId = id;
+        localStorage.setItem(LS_CURRENT, id);
+        renderConversationMessages(conv);
+        renderHistoryList();
+      }
+
+      function startNewChat() {
+        if (sendBtn.disabled) return;
+        currentConvId = null;
+        localStorage.removeItem(LS_CURRENT);
+        clearChatUi();
+        renderHistoryList();
+        inputText.focus();
+      }
+
+      function beginStreamBot() {
+        const row = document.createElement("div");
+        row.className = "msg-row bot";
+        const av = document.createElement("img");
+        av.className = "msg-avatar";
+        av.src = ASSET_BOT;
+        av.alt = "助手";
+        hideBrokenImg(av);
+        const wrap = document.createElement("div");
+        wrap.className = "msg-bubble bot";
         const statusEl = document.createElement("div");
         statusEl.className = "stream-status";
         statusEl.textContent = "正在检索…";
@@ -138,17 +488,44 @@
         wrap.appendChild(details);
         wrap.appendChild(head);
         wrap.appendChild(answerEl);
-        chatBox.appendChild(wrap);
+        row.appendChild(av);
+        row.appendChild(wrap);
+        chatBox.appendChild(row);
         chatBox.scrollTop = chatBox.scrollHeight;
-        return { statusEl, details, reasoningEl, answerEl };
+        return { statusEl, details, reasoningEl, answerEl, row };
       }
 
       async function sendMessage() {
         const msg = inputText.value.trim();
         if (!msg) return;
+
+        if (!currentConvId) {
+          currentConvId =
+            "c_" + Date.now() + "_" + Math.random().toString(36).slice(2, 9);
+          conversations.unshift({
+            id: currentConvId,
+            title: msg.length > 28 ? msg.slice(0, 28) + "…" : msg,
+            updatedAt: Date.now(),
+            messages: [],
+          });
+          localStorage.setItem(LS_CURRENT, currentConvId);
+          saveConversations();
+        }
+
+        const conv = conversations.find((c) => c.id === currentConvId);
+        if (!conv) {
+          startNewChat();
+          return sendMessage();
+        }
+
         addMessage("user", `你：${msg}`);
+        conv.messages.push({ type: "user", text: `你：${msg}` });
+        conv.updatedAt = Date.now();
+        saveConversations();
+
         inputText.value = "";
         sendBtn.disabled = true;
+        btnNewChat.disabled = true;
 
         const { statusEl, details, reasoningEl, answerEl } = beginStreamBot();
         let sseBuf = "";
@@ -161,7 +538,7 @@
           });
           if (!res.ok) {
             statusEl.textContent = "请求失败（HTTP " + res.status + "）";
-            sendBtn.disabled = false;
+            answerEl.textContent = statusEl.textContent;
             return;
           }
           const reader = res.body.getReader();
@@ -199,8 +576,10 @@
           }
         } catch (e) {
           statusEl.textContent = "请求失败，请确认后端已启动。";
+          answerEl.textContent = statusEl.textContent;
         } finally {
-          if (!reasoningEl.textContent.trim()) {
+          const reasoningSaved = (reasoningEl.textContent || "").trim();
+          if (!reasoningSaved) {
             details.remove();
           }
           if (
@@ -209,15 +588,39 @@
           ) {
             answerEl.textContent = "（无回答）";
           }
+          const answerSaved = answerEl.textContent || "";
+          conv.messages.push({
+            type: "assistant",
+            reasoning: reasoningSaved,
+            answer: answerSaved,
+          });
+          conv.updatedAt = Date.now();
+          saveConversations();
+
           sendBtn.disabled = false;
+          btnNewChat.disabled = false;
           chatBox.scrollTop = chatBox.scrollHeight;
         }
       }
+
+      btnNewChat.addEventListener("click", startNewChat);
 
       sendBtn.addEventListener("click", sendMessage);
       inputText.addEventListener("keydown", (e) => {
         if (e.key === "Enter") sendMessage();
       });
+
+      loadConversations();
+      currentConvId = localStorage.getItem(LS_CURRENT) || null;
+      if (currentConvId) {
+        const c = conversations.find((x) => x.id === currentConvId);
+        if (c) renderConversationMessages(c);
+        else {
+          currentConvId = null;
+          localStorage.removeItem(LS_CURRENT);
+        }
+      }
+      renderHistoryList();
     </script>
   </body>
 </html>
