@@ -157,7 +157,11 @@ def build_agent():
                     "「初测」「平衡调整」相关杂谈或公告中的历史数据、不同形态如「本来的样子」与特殊形态页）。"
                     "回答时必须标明每条关键数值对应的出处（页面标题或链接语境），不得把互不兼容的数字混成同一句「定论」而不加限定。"
                     "回答「谁最强」「最厉害」等比较问题时，须说明依据的是哪类资料（如某篇玩家杂谈、某次官方调整说明）及适用阶段/版本，"
-                    "避免将单篇观点或某一测试阶段结论写成整个游戏的唯一事实；若与图鉴当前数据并存，应分条说明差异原因。"
+                    "避免将单篇观点或某一测试阶段结论写成整个游戏的唯一事实；若与图鉴当前数据并存，应分条说明差异原因。\n"
+                    "5. 口吻与代入感：在严格遵守第 1～4 条、不编造任何资料外事实的前提下，回答语气可更贴近游戏与 BWIKI 读者习惯——"
+                    "例如以小洛克/训练师同行、图鉴解说或王国向导的视角组织语言，开头允许一两句轻量的氛围引入，"
+                    "但核心信息（技能名、效果、数值、获取方式等）仍须与参考资料一致、表述清晰；"
+                    "不要虚构官方剧情对白、任务台词或未在片段中出现的设定。"
                 ),
             ),
             ("human", "参考资料：\n{context}\n\n用户问题：{input}"),
@@ -182,13 +186,32 @@ def build_agent():
             self._chain = chain
 
         def invoke(self, data: dict) -> dict:
-            text = self._chain.invoke({"input": data.get("input", "")})
-            return {"output": text}
+            return {"output": self.invoke_with_trace(data)["output"]}
 
-        async def astream_sse_payloads(self, user_input: str):
+        def invoke_with_trace(self, data: dict) -> dict:
+            """
+            与链式 invoke 等价的一次调用，额外返回检索文档与耗时，供线上评估日志使用（避免二次检索）。
+            """
+            import time
+
+            t0 = time.perf_counter()
+            q = data.get("input", "") or ""
+            docs = _gather_docs(q, self._retriever, self._vectorstore)
+            ctx = _format_docs(docs)
+            prompt_val = self._prompt.invoke({"context": ctx, "input": q})
+            msg = self._llm.invoke(prompt_val)
+            text = StrOutputParser().invoke(msg)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            return {"output": text, "docs": docs, "latency_ms": elapsed_ms}
+
+        def retrieve_documents(self, user_input: str) -> list:
+            """供离线 RAG 评估：返回与线上一致的检索文档列表（未拼接成 context 字符串）。"""
+            return _gather_docs(user_input, self._retriever, self._vectorstore)
+
+        async def astream_sse_payloads(self, user_input: str, eval_capture: dict | None = None):
             from backend.chat_stream import iter_rag_stream_events
 
-            async for evt in iter_rag_stream_events(self, user_input):
+            async for evt in iter_rag_stream_events(self, user_input, eval_capture=eval_capture):
                 yield evt
 
     return _RAGRunner()

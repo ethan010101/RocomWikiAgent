@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from typing import Any, AsyncIterator
 
 from backend import agent as ag
@@ -157,13 +158,18 @@ async def _stream_via_langchain(llm: Any, prompt_val: Any) -> AsyncIterator[dict
             yield {"type": "content", "delta": c}
 
 
-async def iter_rag_stream_events(runner: Any, user_input: str) -> AsyncIterator[dict]:
-    def _job() -> str:
+async def iter_rag_stream_events(
+    runner: Any, user_input: str, eval_capture: dict | None = None
+) -> AsyncIterator[dict]:
+    def _job() -> tuple[list, str]:
         docs = ag._gather_docs(user_input, runner._retriever, runner._vectorstore)
-        return ag._format_docs(docs)
+        return docs, ag._format_docs(docs)
 
     try:
-        ctx = await asyncio.to_thread(_job)
+        docs, ctx = await asyncio.to_thread(_job)
+        if eval_capture is not None:
+            eval_capture["docs"] = docs
+            eval_capture["t_after_retrieval"] = time.perf_counter()
     except Exception as e:
         yield {"type": "error", "message": f"检索失败: {e}"}
         yield {"type": "done"}

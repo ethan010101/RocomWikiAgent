@@ -1,0 +1,3 @@
+{"id":"ex1","question":"请用一句话说明：洛克王国 BWIKI 是什么类型的站点？","expected_substrings":["洛克王国","wiki"],"expected_source_substrings":["biligame.com/rocom"]}
+{"id":"ex2","question":"灼烧伤害吃火系伤害加成吗?","expected_substrings":["灼烧","伤害","火系","加成"],",expected_source_substrings":["biligame.com/rocom"]}
+{"id":"ex2","question":"冻结的效果是什么?","expected_substrings":["冻结","效果","伤害"],",expected_source_substrings":["biligame.com/rocom"]}

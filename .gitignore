@@ -23,3 +23,12 @@ data/kb/
 data/raw_pages.jsonl
 backend/data/kb/
 backend/data/raw_pages.jsonl
+
+# 线上对话评估日志（含用户问题片段，勿提交）
+data/eval/online_eval.jsonl
+# RAGAS 运行输出（--out 生成）
+data/eval/ragas_last.json
+# 半自动生成的评测集（可本地用 gen_eval_golden 重建）
+data/eval/golden.generated.jsonl
+# 对话持久化（含聊天记录，勿提交）
+data/conversations.json

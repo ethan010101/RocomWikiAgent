@@ -294,6 +294,11 @@
       const LS_CONV = "rocomWiki_conversations_v1";
       const LS_CURRENT = "rocomWiki_current_conv_id";
 
+      const API_ORIGIN =
+        location.protocol === "file:"
+          ? "http://127.0.0.1:8000"
+          : location.origin;
+
       const chatBox = document.getElementById("chatBox");
       const inputText = document.getElementById("inputText");
       const sendBtn = document.getElementById("sendBtn");
@@ -322,9 +327,100 @@
         }
       }
 
+      let _serverSaveTimer = null;
+
       function saveConversations() {
-        localStorage.setItem(LS_CONV, JSON.stringify(conversations));
+        try {
+          localStorage.setItem(LS_CONV, JSON.stringify(conversations));
+        } catch (e) {
+          console.warn("localStorage save failed", e);
+        }
+        if (currentConvId) {
+          try {
+            localStorage.setItem(LS_CURRENT, currentConvId);
+          } catch (e) {
+            /* ignore */
+          }
+        } else {
+          try {
+            localStorage.removeItem(LS_CURRENT);
+          } catch (e) {
+            /* ignore */
+          }
+        }
         renderHistoryList();
+        scheduleServerSave();
+      }
+
+      function scheduleServerSave() {
+        clearTimeout(_serverSaveTimer);
+        _serverSaveTimer = setTimeout(() => {
+          void syncConversationsToServer();
+        }, 450);
+      }
+
+      async function syncConversationsToServer() {
+        try {
+          const res = await fetch(API_ORIGIN + "/api/conversations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversations,
+              currentConvId,
+            }),
+          });
+          if (!res.ok) console.warn("persist conversations HTTP", res.status);
+        } catch (e) {
+          console.warn("persist conversations failed", e);
+        }
+      }
+
+      async function hydrateConversationsFromServer() {
+        loadConversations();
+        let usedRemoteList = false;
+        try {
+          const res = await fetch(API_ORIGIN + "/api/conversations");
+          if (!res.ok) {
+            try {
+              currentConvId = localStorage.getItem(LS_CURRENT) || null;
+            } catch (e) {
+              currentConvId = null;
+            }
+            return;
+          }
+          const d = await res.json();
+          const remote = Array.isArray(d.conversations) ? d.conversations : [];
+          if (remote.length > 0) {
+            usedRemoteList = true;
+            conversations = remote;
+            currentConvId =
+              d.currentConvId && typeof d.currentConvId === "string"
+                ? d.currentConvId
+                : null;
+            try {
+              localStorage.setItem(LS_CONV, JSON.stringify(conversations));
+              if (currentConvId) localStorage.setItem(LS_CURRENT, currentConvId);
+              else localStorage.removeItem(LS_CURRENT);
+            } catch (e) {
+              /* ignore */
+            }
+          } else if (conversations.length > 0) {
+            await syncConversationsToServer();
+          }
+        } catch (e) {
+          console.warn("load conversations from server failed", e);
+        }
+        if (!usedRemoteList) {
+          if (conversations.length === 0) {
+            currentConvId = null;
+          } else {
+            try {
+              currentConvId = localStorage.getItem(LS_CURRENT) || null;
+            } catch (e) {
+              currentConvId = null;
+            }
+          }
+        }
       }
 
       function formatTime(ts) {
@@ -442,17 +538,15 @@
         const conv = conversations.find((c) => c.id === id);
         if (!conv) return;
         currentConvId = id;
-        localStorage.setItem(LS_CURRENT, id);
         renderConversationMessages(conv);
-        renderHistoryList();
+        saveConversations();
       }
 
       function startNewChat() {
         if (sendBtn.disabled) return;
         currentConvId = null;
-        localStorage.removeItem(LS_CURRENT);
         clearChatUi();
-        renderHistoryList();
+        saveConversations();
         inputText.focus();
       }
 
@@ -508,7 +602,6 @@
             updatedAt: Date.now(),
             messages: [],
           });
-          localStorage.setItem(LS_CURRENT, currentConvId);
           saveConversations();
         }
 
@@ -531,7 +624,7 @@
         let sseBuf = "";
 
         try {
-          const res = await fetch("http://127.0.0.1:8000/chat/stream", {
+          const res = await fetch(API_ORIGIN + "/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: msg }),
@@ -610,17 +703,40 @@
         if (e.key === "Enter") sendMessage();
       });
 
-      loadConversations();
-      currentConvId = localStorage.getItem(LS_CURRENT) || null;
-      if (currentConvId) {
-        const c = conversations.find((x) => x.id === currentConvId);
-        if (c) renderConversationMessages(c);
-        else {
-          currentConvId = null;
-          localStorage.removeItem(LS_CURRENT);
+      window.addEventListener("beforeunload", () => {
+        clearTimeout(_serverSaveTimer);
+        try {
+          const raw = JSON.stringify({ conversations, currentConvId });
+          if (raw.length > 60000) return;
+          navigator.sendBeacon(
+            API_ORIGIN + "/api/conversations",
+            new Blob([raw], { type: "application/json" }),
+          );
+        } catch (e) {
+          /* ignore */
         }
-      }
-      renderHistoryList();
+      });
+
+      (async function initConversations() {
+        await hydrateConversationsFromServer();
+        if (!currentConvId) {
+          currentConvId = localStorage.getItem(LS_CURRENT) || null;
+        }
+        if (currentConvId) {
+          const c = conversations.find((x) => x.id === currentConvId);
+          if (c) renderConversationMessages(c);
+          else {
+            currentConvId = null;
+            try {
+              localStorage.removeItem(LS_CURRENT);
+            } catch (e) {
+              /* ignore */
+            }
+            saveConversations();
+          }
+        }
+        renderHistoryList();
+      })();
     </script>
   </body>
 </html>
