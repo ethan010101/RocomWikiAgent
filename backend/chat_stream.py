@@ -159,25 +159,49 @@ async def _stream_via_langchain(llm: Any, prompt_val: Any) -> AsyncIterator[dict
 
 
 async def iter_rag_stream_events(
-    runner: Any, user_input: str, eval_capture: dict | None = None
+    runner: Any,
+    user_input: str,
+    history_messages: list | None = None,
+    context_state: dict | None = None,
+    eval_capture: dict | None = None,
 ) -> AsyncIterator[dict]:
-    def _job() -> tuple[list, str]:
-        docs = ag._gather_docs(user_input, runner._retriever, runner._vectorstore)
-        return docs, ag._format_docs(docs)
+    def _job():
+        def _gather(ui: str, main_q: str) -> list:
+            return ag._gather_docs(
+                ui,
+                runner._retriever,
+                runner._vectorstore,
+                main_retrieval_query=main_q,
+            )
+
+        return ag.prepare_context_rag_turn(
+            user_input=user_input,
+            history_messages=history_messages,
+            context_state=context_state,
+            gather_docs=_gather,
+            format_docs=ag._format_docs,
+            retrieval_query_suffix=ag._retrieval_query,
+        )
 
     try:
-        docs, ctx = await asyncio.to_thread(_job)
+        prep = await asyncio.to_thread(_job)
         if eval_capture is not None:
-            eval_capture["docs"] = docs
+            eval_capture["docs"] = prep.docs
+            eval_capture["pipeline"] = prep.trace
             eval_capture["t_after_retrieval"] = time.perf_counter()
     except Exception as e:
         yield {"type": "error", "message": f"检索失败: {e}"}
         yield {"type": "done"}
         return
 
+    if prep.output_direct is not None:
+        yield {"type": "content", "delta": prep.output_direct}
+        yield {"type": "done"}
+        return
+
     yield {"type": "status", "message": "检索完成，正在生成…"}
 
-    prompt_val = await runner._prompt.ainvoke({"context": ctx, "input": user_input})
+    prompt_val = await runner._prompt.ainvoke(prep.prompt_vars)
 
     try:
         if _use_openai_sdk_stream():

@@ -13,6 +13,8 @@ from langchain_openai import ChatOpenAI
 
 from . import embeddings as emb_mod
 from .paths import KB_DIR
+from .rag_pipeline.orchestrate import prepare_context_rag_turn, run_context_rag_turn
+from .rag_pipeline.prompts import HUMAN_TEMPLATE, SYSTEM_RAG
 
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "16"))
 RAG_USE_LEXICAL = os.getenv("RAG_USE_LEXICAL", "false").lower() in ("1", "true", "yes")
@@ -85,14 +87,24 @@ def _lexical_hits_from_store(vectorstore: FAISS, terms: list[str], total_cap: in
     return out
 
 
-def _gather_docs(user_input: str, retriever, vectorstore: FAISS) -> list:
-    """默认纯向量检索；RAG_USE_LEXICAL=1 时叠加标题/正文子串命中（旧英文向量模型兜底）。"""
+def _gather_docs(
+    user_input: str,
+    retriever,
+    vectorstore: FAISS,
+    *,
+    main_retrieval_query: str | None = None,
+) -> list:
+    """
+    多路检索。main_retrieval_query 由 rag_pipeline 注入（含解析出的主体 + 原问句 + 后缀），
+    缺省时退化为仅按当前用户句检索。
+    """
+    primary = (main_retrieval_query or "").strip() or _retrieval_query(user_input)
     terms = list(dict.fromkeys(re.findall(r"[\u4e00-\u9fff]{2,8}", user_input)))
     lex_cap = int(os.getenv("RAG_LEXICAL_CAP", "16"))
     buckets: list = []
     if RAG_USE_LEXICAL:
         buckets.extend(_lexical_hits_from_store(vectorstore, terms, total_cap=lex_cap))
-    buckets.extend(retriever.invoke(_retrieval_query(user_input)))
+    buckets.extend(retriever.invoke(primary))
     seen_terms: set[str] = set()
     for term in terms:
         if term == user_input.strip() or term in seen_terms:
@@ -144,33 +156,18 @@ def build_agent():
 
     prompt = ChatPromptTemplate.from_messages(
         [
-            (
-                "system",
-                (
-                    "你是洛克王国 BWIKI 助手。下面「参考资料」来自已索引的 wiki 片段。\n"
-                    "规则：\n"
-                    "1. 只根据参考资料回答；禁止编造技能名、效果、数值、种族值等。\n"
-                    "2. 若资料里没有与用户问题直接相关的内容，必须明确说「根据当前检索到的 wiki 片段未找到相关信息」，"
-                    "可简要说明片段里实际提到了什么；不要改用你记忆中的旧版页游数据冒充 wiki。\n"
-                    "3. 用中文作答；末尾用列表给出参考链接（去重，来自片段中的来源 URL）。\n"
-                    "4. 数据一致性与语境：同一精灵在不同片段中可能出现多套数值（例如：图鉴词条里的种族值、"
-                    "「初测」「平衡调整」相关杂谈或公告中的历史数据、不同形态如「本来的样子」与特殊形态页）。"
-                    "回答时必须标明每条关键数值对应的出处（页面标题或链接语境），不得把互不兼容的数字混成同一句「定论」而不加限定。"
-                    "回答「谁最强」「最厉害」等比较问题时，须说明依据的是哪类资料（如某篇玩家杂谈、某次官方调整说明）及适用阶段/版本，"
-                    "避免将单篇观点或某一测试阶段结论写成整个游戏的唯一事实；若与图鉴当前数据并存，应分条说明差异原因。\n"
-                    "5. 口吻与代入感：在严格遵守第 1～4 条、不编造任何资料外事实的前提下，回答语气可更贴近游戏与 BWIKI 读者习惯——"
-                    "例如以小洛克/训练师同行、图鉴解说或王国向导的视角组织语言，开头允许一两句轻量的氛围引入，"
-                    "但核心信息（技能名、效果、数值、获取方式等）仍须与参考资料一致、表述清晰；"
-                    "不要虚构官方剧情对白、任务台词或未在片段中出现的设定。"
-                ),
-            ),
-            ("human", "参考资料：\n{context}\n\n用户问题：{input}"),
+            ("system", SYSTEM_RAG),
+            ("human", HUMAN_TEMPLATE),
         ]
     )
 
     chain = (
         RunnablePassthrough.assign(
-            context=lambda x: _format_docs(_gather_docs(x["input"], retriever, vectorstore))
+            session_summary=lambda x: "（无）",
+            history=lambda x: "（无）",
+            context=lambda x: _format_docs(
+                _gather_docs(x["input"], retriever, vectorstore, main_retrieval_query=None)
+            ),
         )
         | prompt
         | llm
@@ -190,28 +187,60 @@ def build_agent():
 
         def invoke_with_trace(self, data: dict) -> dict:
             """
-            与链式 invoke 等价的一次调用，额外返回检索文档与耗时，供线上评估日志使用（避免二次检索）。
+            走 rag_pipeline 分阶段流水线；返回 pipeline 追踪字段便于排查。
             """
-            import time
-
-            t0 = time.perf_counter()
             q = data.get("input", "") or ""
-            docs = _gather_docs(q, self._retriever, self._vectorstore)
-            ctx = _format_docs(docs)
-            prompt_val = self._prompt.invoke({"context": ctx, "input": q})
-            msg = self._llm.invoke(prompt_val)
-            text = StrOutputParser().invoke(msg)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            return {"output": text, "docs": docs, "latency_ms": elapsed_ms}
+
+            def _gather(ui: str, main_q: str) -> list:
+                return _gather_docs(
+                    ui,
+                    self._retriever,
+                    self._vectorstore,
+                    main_retrieval_query=main_q,
+                )
+
+            result = run_context_rag_turn(
+                user_input=q,
+                history_messages=data.get("history_messages"),
+                context_state=data.get("context_state"),
+                gather_docs=_gather,
+                format_docs=_format_docs,
+                prompt=self._prompt,
+                llm=self._llm,
+                retrieval_query_suffix=_retrieval_query,
+            )
+            return {
+                "output": result.output,
+                "docs": result.docs,
+                "latency_ms": result.latency_ms,
+                "pipeline": result.trace,
+            }
 
         def retrieve_documents(self, user_input: str) -> list:
             """供离线 RAG 评估：返回与线上一致的检索文档列表（未拼接成 context 字符串）。"""
-            return _gather_docs(user_input, self._retriever, self._vectorstore)
+            return _gather_docs(
+                user_input,
+                self._retriever,
+                self._vectorstore,
+                main_retrieval_query=None,
+            )
 
-        async def astream_sse_payloads(self, user_input: str, eval_capture: dict | None = None):
+        async def astream_sse_payloads(
+            self,
+            user_input: str,
+            history_messages: list | None = None,
+            context_state: dict | None = None,
+            eval_capture: dict | None = None,
+        ):
             from backend.chat_stream import iter_rag_stream_events
 
-            async for evt in iter_rag_stream_events(self, user_input, eval_capture=eval_capture):
+            async for evt in iter_rag_stream_events(
+                self,
+                user_input,
+                history_messages=history_messages,
+                context_state=context_state,
+                eval_capture=eval_capture,
+            ):
                 yield evt
 
     return _RAGRunner()

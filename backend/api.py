@@ -40,6 +40,8 @@ agent_executor = None
 
 class ChatRequest(BaseModel):
     message: str
+    history_messages: list = Field(default_factory=list)
+    context_state: dict = Field(default_factory=dict)
 
 
 class ChatResponse(BaseModel):
@@ -103,7 +105,13 @@ def chat(req: ChatRequest):
             status_code=503,
             detail="知识库未就绪。请在项目根目录执行: python backend/build_kb.py",
         )
-    trace = agent_executor.invoke_with_trace({"input": req.message})
+    trace = agent_executor.invoke_with_trace(
+        {
+            "input": req.message,
+            "history_messages": req.history_messages,
+            "context_state": req.context_state,
+        }
+    )
     answer = trace.get("output", "未获取到回答")
     online_eval.schedule_log(
         question=req.message,
@@ -130,7 +138,10 @@ async def chat_stream(req: ChatRequest):
         content_parts: list[str] = []
         try:
             async for evt in agent_executor.astream_sse_payloads(
-                req.message, eval_capture=capture
+                req.message,
+                history_messages=req.history_messages,
+                context_state=req.context_state,
+                eval_capture=capture,
             ):
                 if isinstance(evt, dict) and evt.get("type") == "content":
                     content_parts.append(evt.get("delta") or "")

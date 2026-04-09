@@ -74,12 +74,22 @@
         margin: 0 -4px;
         padding: 0 4px;
       }
+      .history-item-row {
+        display: flex;
+        align-items: stretch;
+        gap: 2px;
+        margin-bottom: 4px;
+        border-radius: 8px;
+      }
+      .history-item-row.active .history-item {
+        background: rgba(43, 108, 255, 0.35);
+      }
       .history-item {
+        flex: 1;
+        min-width: 0;
         display: block;
-        width: 100%;
         text-align: left;
         padding: 10px 10px;
-        margin-bottom: 4px;
         border: none;
         border-radius: 8px;
         background: transparent;
@@ -91,8 +101,31 @@
       .history-item:hover {
         background: rgba(255, 255, 255, 0.08);
       }
-      .history-item.active {
-        background: rgba(43, 108, 255, 0.35);
+      .history-item-row.active .history-item:hover {
+        background: rgba(43, 108, 255, 0.42);
+      }
+      .history-item-delete {
+        flex-shrink: 0;
+        width: 34px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.38);
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .history-item-delete:hover {
+        background: rgba(255, 80, 80, 0.25);
+        color: #ffb4b4;
+      }
+      .history-item-delete:disabled {
+        opacity: 0.25;
+        cursor: not-allowed;
       }
       .history-item-title {
         display: block;
@@ -443,10 +476,14 @@
           return;
         }
         for (const c of sorted) {
+          const row = document.createElement("div");
+          row.className =
+            "history-item-row" + (c.id === currentConvId ? " active" : "");
+          row.dataset.id = c.id;
+
           const btn = document.createElement("button");
           btn.type = "button";
-          btn.className =
-            "history-item" + (c.id === currentConvId ? " active" : "");
+          btn.className = "history-item";
           btn.dataset.id = c.id;
           const t = document.createElement("span");
           t.className = "history-item-title";
@@ -457,7 +494,19 @@
           btn.appendChild(t);
           btn.appendChild(tm);
           btn.addEventListener("click", () => openConversation(c.id));
-          historyList.appendChild(btn);
+
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "history-item-delete";
+          del.setAttribute("aria-label", "删除对话");
+          del.setAttribute("title", "删除");
+          del.textContent = "×";
+          del.disabled = sendBtn.disabled;
+          del.addEventListener("click", (e) => deleteConversation(c.id, e));
+
+          row.appendChild(btn);
+          row.appendChild(del);
+          historyList.appendChild(row);
         }
       }
 
@@ -542,6 +591,23 @@
         saveConversations();
       }
 
+      function deleteConversation(id, ev) {
+        if (ev) {
+          ev.stopPropagation();
+          ev.preventDefault();
+        }
+        if (sendBtn.disabled) return;
+        if (!confirm("确定删除这条对话？删除后无法恢复。")) return;
+        const idx = conversations.findIndex((c) => c.id === id);
+        if (idx < 0) return;
+        conversations.splice(idx, 1);
+        if (currentConvId === id) {
+          currentConvId = null;
+          clearChatUi();
+        }
+        saveConversations();
+      }
+
       function startNewChat() {
         if (sendBtn.disabled) return;
         currentConvId = null;
@@ -619,6 +685,7 @@
         inputText.value = "";
         sendBtn.disabled = true;
         btnNewChat.disabled = true;
+        renderHistoryList();
 
         const { statusEl, details, reasoningEl, answerEl } = beginStreamBot();
         let sseBuf = "";
@@ -627,7 +694,11 @@
           const res = await fetch(API_ORIGIN + "/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: msg }),
+            body: JSON.stringify({
+              message: msg,
+              history_messages: conv.messages,
+              context_state: {},
+            }),
           });
           if (!res.ok) {
             statusEl.textContent = "请求失败（HTTP " + res.status + "）";
