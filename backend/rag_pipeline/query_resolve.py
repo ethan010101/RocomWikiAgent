@@ -164,3 +164,38 @@ def retrieval_seed_question(resolved: ResolvedQuery, user_input: str) -> str:
     if subj and subj not in q:
         return f"{subj} {q}".strip()
     return q
+
+
+def retrieval_seed_from_llm_entities(
+    resolved: ResolvedQuery,
+    user_input: str,
+    entities: list[str],
+    info_types: list[str] | tuple[str, ...],
+) -> str | None:
+    """
+    用 LLM 抽取的 entities + info_types 生成单路检索种子；多实体（>=2）时返回 None，由上游分路检索。
+    """
+    it = " ".join(str(x).strip() for x in (info_types or ()) if str(x).strip()).strip()
+    ents = [str(x).strip() for x in (entities or []) if str(x).strip()]
+    if len(ents) >= 2:
+        return None
+    subj = (resolved.subject or "").strip()
+    if len(ents) == 1:
+        e = ents[0]
+        if it:
+            return f"{e} {it}".strip()
+        if resolved.kind == "explicit_entity" and subj:
+            return retrieval_seed_question(resolved, user_input)
+        return retrieval_seed_question(
+            ResolvedQuery(
+                kind="pronoun",
+                subject=e,
+                ordinal_index=0,
+                raw_question=user_input,
+                reason="entity_extract_seed",
+            ),
+            user_input,
+        )
+    if resolved.kind == "explicit_entity" and subj and it:
+        return f"{subj} {it}".strip()
+    return None

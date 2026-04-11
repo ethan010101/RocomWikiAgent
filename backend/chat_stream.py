@@ -3,11 +3,107 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
+import re
 import time
 from typing import Any, AsyncIterator
 
 from backend import agent as ag
+from backend.rag_pipeline.turn_context import RAG_TURN_JSON_LINE_PREFIX
+
+logger = logging.getLogger(__name__)
+
+
+def _entity_extract_sse_payload(trace: dict[str, Any]) -> dict[str, Any]:
+    """从 RAG trace 的 ingest 阶段取出 LLM 实体抽取结果，供 SSE 与对话日志使用。"""
+    ingest = (trace.get("stages") or {}).get("ingest") or {}
+    ents = ingest.get("entity_extract_entities_merged")
+    if ents is None:
+        ents = ingest.get("entity_extract_entities")
+    if not isinstance(ents, list):
+        ents = list(ents) if ents else []
+    it = ingest.get("entity_extract_info_types_merged")
+    if it is None:
+        it = ingest.get("entity_extract_info_type")
+    if isinstance(it, str):
+        info_types = [it.strip()] if it.strip() else []
+    elif isinstance(it, list):
+        info_types = [str(x).strip() for x in it if str(x).strip()]
+    else:
+        info_types = []
+    return {"type": "entity_extract", "entities": ents, "info_type": info_types}
+
+
+def _parse_stream_footer_json(raw: str) -> dict[str, Any] | None:
+    raw = (raw or "").strip()
+    if not raw.startswith("{"):
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    rec = str(obj.get("recommended_entity") or "").strip()
+    ents = obj.get("entities")
+    if not isinstance(ents, list):
+        ents = []
+    it = obj.get("info_type")
+    if isinstance(it, list):
+        it_list = [str(x).strip() for x in it if str(x).strip()]
+    elif isinstance(it, str):
+        it_list = [p for p in re.split(r"[\s,，、]+", it.strip()) if p]
+    else:
+        it_list = []
+    return {
+        "recommended_entity": rec,
+        "entities": [str(x).strip() for x in ents if str(x).strip()][:24],
+        "info_type": it_list[:12],
+    }
+
+
+async def _stream_strip_turn_json(
+    inner: AsyncIterator[dict],
+    *,
+    out_meta: dict[str, Any],
+) -> AsyncIterator[dict]:
+    """不向前端透出 <<RAG_TURN_JSON>> 行；解析结果写入 out_meta['turn_context']。"""
+    in_footer = False
+    meta_chunks: list[str] = []
+    line_buf = ""
+
+    async for evt in inner:
+        if evt.get("type") != "content":
+            if not in_footer and line_buf:
+                yield {"type": "content", "delta": line_buf}
+                line_buf = ""
+            yield evt
+            continue
+        d = evt.get("delta") or ""
+        if in_footer:
+            meta_chunks.append(d)
+            continue
+        line_buf += d
+        while RAG_TURN_JSON_LINE_PREFIX in line_buf:
+            pre, rest = line_buf.split(RAG_TURN_JSON_LINE_PREFIX, 1)
+            if pre:
+                yield {"type": "content", "delta": pre}
+            in_footer = True
+            meta_chunks = [rest]
+            line_buf = ""
+        if in_footer:
+            continue
+        while "\n" in line_buf:
+            line, line_buf = line_buf.split("\n", 1)
+            yield {"type": "content", "delta": line + "\n"}
+    if not in_footer and line_buf:
+        yield {"type": "content", "delta": line_buf}
+    if in_footer:
+        meta = _parse_stream_footer_json("".join(meta_chunks))
+        if meta is not None:
+            out_meta["turn_context"] = meta
 
 # DeepSeek 思考模式说明：https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
 
@@ -181,6 +277,7 @@ async def iter_rag_stream_events(
             gather_docs=_gather,
             format_docs=ag._format_docs,
             retrieval_query_suffix=ag._retrieval_query,
+            llm=runner._llm,
         )
 
     try:
@@ -194,25 +291,50 @@ async def iter_rag_stream_events(
         yield {"type": "done"}
         return
 
+    ex_payload = _entity_extract_sse_payload(prep.trace)
+    logger.info(
+        "llm_entity_extract entities=%r info_type=%r",
+        ex_payload.get("entities"),
+        ex_payload.get("info_type"),
+    )
+
     if prep.output_direct is not None:
+        yield ex_payload
         yield {"type": "content", "delta": prep.output_direct}
         yield {"type": "done"}
         return
 
     yield {"type": "status", "message": "检索完成，正在生成…"}
+    yield ex_payload
 
     prompt_val = await runner._prompt.ainvoke(prep.prompt_vars)
 
+    stream_meta: dict[str, Any] = {}
     try:
         if _use_openai_sdk_stream():
-            async for evt in _stream_via_openai_sdk(prompt_val):
-                yield evt
+            inner = _stream_via_openai_sdk(prompt_val)
         else:
-            async for evt in _stream_via_langchain(runner._llm, prompt_val):
-                yield evt
+            inner = _stream_via_langchain(runner._llm, prompt_val)
+        async for evt in _stream_strip_turn_json(inner, out_meta=stream_meta):
+            yield evt
     except Exception as e:
         yield {"type": "error", "message": f"生成失败: {e}"}
         yield {"type": "done"}
         return
+
+    tc = stream_meta.get("turn_context")
+    if isinstance(tc, dict) and (
+        tc.get("recommended_entity")
+        or tc.get("entities")
+        or tc.get("info_type")
+    ):
+        yield {
+            "type": "turn_context",
+            "recommended_entity": tc.get("recommended_entity") or "",
+            "entities": tc.get("entities") if isinstance(tc.get("entities"), list) else [],
+            "info_type": tc.get("info_type") if isinstance(tc.get("info_type"), list) else [],
+        }
+    if eval_capture is not None and isinstance(tc, dict):
+        eval_capture["turn_context"] = tc
 
     yield {"type": "done"}

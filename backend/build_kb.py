@@ -15,6 +15,10 @@ if _backend_dir not in sys.path:
 import hf_setup
 
 hf_setup.init_hf_env()
+_hf_ep = os.getenv("HF_ENDPOINT", "").strip()
+print(
+    f"[Hub] {'HF_ENDPOINT=' + _hf_ep if _hf_ep else 'HF_ENDPOINT 未设置（使用 huggingface.co）'}"
+)
 
 import requests
 from bs4 import BeautifulSoup

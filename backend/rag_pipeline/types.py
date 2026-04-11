@@ -33,3 +33,4 @@ class PipelineResult:
     docs: list
     latency_ms: float
     trace: dict[str, Any]
+    turn_context: dict[str, Any] | None = None

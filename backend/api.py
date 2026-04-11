@@ -46,6 +46,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    turn_context: dict | None = None
 
 
 class ConversationsPayload(BaseModel):
@@ -120,12 +121,17 @@ def chat(req: ChatRequest):
         latency_ms=float(trace.get("latency_ms", 0)),
         route="POST /chat",
     )
-    return ChatResponse(answer=answer)
+    return ChatResponse(
+        answer=answer,
+        turn_context=trace.get("turn_context")
+        if isinstance(trace.get("turn_context"), dict)
+        else None,
+    )
 
 
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest):
-    """SSE：data 为 JSON。type=status | reasoning | content | error | done"""
+    """SSE：data 为 JSON。type=status | entity_extract | reasoning | content | error | done"""
     if agent_executor is None:
         raise HTTPException(
             status_code=503,

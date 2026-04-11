@@ -163,6 +163,7 @@ def build_agent():
 
     chain = (
         RunnablePassthrough.assign(
+            prior_turn_context=lambda x: "",
             session_summary=lambda x: "（无）",
             history=lambda x: "（无）",
             context=lambda x: _format_docs(
@@ -214,6 +215,7 @@ def build_agent():
                 "docs": result.docs,
                 "latency_ms": result.latency_ms,
                 "pipeline": result.trace,
+                "turn_context": result.turn_context,
             }
 
         def retrieve_documents(self, user_input: str) -> list:

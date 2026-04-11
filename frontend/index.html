@@ -221,6 +221,19 @@
         color: #666;
         margin-bottom: 8px;
       }
+      .entity-extract-log {
+        font-size: 12px;
+        color: #555;
+        line-height: 1.45;
+        margin-bottom: 8px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: #f7f9fc;
+        border: 1px solid #e4e9f2;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
       details.reasoning {
         margin-top: 8px;
         padding: 10px 12px;
@@ -531,7 +544,45 @@
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
-      function appendAssistantStatic(reasoning, answer) {
+      function formatEntityExtractLine(entities, infoTypes, recommended) {
+        const ent =
+          entities && entities.length ? entities.join("、") : "（无）";
+        let dim = "（无）";
+        if (Array.isArray(infoTypes) && infoTypes.length) {
+          dim = infoTypes
+            .map((x) => String(x || "").trim())
+            .filter(Boolean)
+            .join("、");
+        } else if (typeof infoTypes === "string" && infoTypes.trim()) {
+          dim = infoTypes.trim();
+        }
+        const rec =
+          recommended != null && String(recommended).trim()
+            ? `；最推荐「${String(recommended).trim()}」`
+            : "";
+        return `LLM 抽取：实体「${ent}」；维度「${dim}」${rec}`;
+      }
+
+      function lastTurnFromMessages(messages) {
+        if (!Array.isArray(messages)) return null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const m = messages[i];
+          if (m && m.type === "assistant" && m.turn_context) return m.turn_context;
+        }
+        return null;
+      }
+
+      function appendAssistantStatic(m) {
+        const reasoning = (m && m.reasoning ? String(m.reasoning) : "").trim();
+        const answer = (m && m.answer ? String(m.answer) : "").trim();
+        const entities =
+          m && Array.isArray(m.entities) ? m.entities : undefined;
+        let infoTypesNorm = undefined;
+        if (m && Array.isArray(m.info_type)) {
+          infoTypesNorm = m.info_type;
+        } else if (m && typeof m.info_type === "string" && m.info_type.trim()) {
+          infoTypesNorm = [m.info_type.trim()];
+        }
         const row = document.createElement("div");
         row.className = "msg-row bot";
         const av = document.createElement("img");
@@ -541,8 +592,27 @@
         hideBrokenImg(av);
         const wrap = document.createElement("div");
         wrap.className = "msg-bubble bot";
-        const r = (reasoning || "").trim();
-        if (r) {
+        const recStatic =
+          (m && m.recommended_entity && String(m.recommended_entity).trim()) ||
+          (m &&
+            m.turn_context &&
+            String(m.turn_context.recommended_entity || "").trim()) ||
+          "";
+        if (
+          entities !== undefined ||
+          infoTypesNorm !== undefined ||
+          recStatic
+        ) {
+          const ex = document.createElement("div");
+          ex.className = "entity-extract-log";
+          ex.textContent = formatEntityExtractLine(
+            Array.isArray(entities) ? entities : [],
+            infoTypesNorm != null ? infoTypesNorm : [],
+            recStatic,
+          );
+          wrap.appendChild(ex);
+        }
+        if (reasoning) {
           const details = document.createElement("details");
           details.className = "reasoning";
           details.open = false;
@@ -550,7 +620,7 @@
           sum.textContent = "思考过程（reasoning_content 流）";
           const reasoningEl = document.createElement("div");
           reasoningEl.className = "reasoning-body";
-          reasoningEl.textContent = r;
+          reasoningEl.textContent = reasoning;
           details.appendChild(sum);
           details.appendChild(reasoningEl);
           wrap.appendChild(details);
@@ -558,7 +628,7 @@
         const head = document.createElement("div");
         head.textContent = "助手：";
         head.style.fontWeight = "600";
-        head.style.marginTop = "10px";
+        head.style.marginTop = reasoning ? "10px" : "6px";
         const answerEl = document.createElement("div");
         answerEl.className = "answer-body";
         answerEl.textContent = answer || "（无回答）";
@@ -577,7 +647,7 @@
           if (m.type === "user") {
             addMessage("user", m.text || "");
           } else if (m.type === "assistant") {
-            appendAssistantStatic(m.reasoning || "", m.answer || "");
+            appendAssistantStatic(m);
           }
         }
       }
@@ -629,6 +699,9 @@
         const statusEl = document.createElement("div");
         statusEl.className = "stream-status";
         statusEl.textContent = "正在检索…";
+        const entityExtractEl = document.createElement("div");
+        entityExtractEl.className = "entity-extract-log";
+        entityExtractEl.style.display = "none";
         const details = document.createElement("details");
         details.className = "reasoning";
         details.open = true;
@@ -645,6 +718,7 @@
         const answerEl = document.createElement("div");
         answerEl.className = "answer-body";
         wrap.appendChild(statusEl);
+        wrap.appendChild(entityExtractEl);
         wrap.appendChild(details);
         wrap.appendChild(head);
         wrap.appendChild(answerEl);
@@ -652,7 +726,7 @@
         row.appendChild(wrap);
         chatBox.appendChild(row);
         chatBox.scrollTop = chatBox.scrollHeight;
-        return { statusEl, details, reasoningEl, answerEl, row };
+        return { statusEl, entityExtractEl, details, reasoningEl, answerEl, row };
       }
 
       async function sendMessage() {
@@ -687,17 +761,22 @@
         btnNewChat.disabled = true;
         renderHistoryList();
 
-        const { statusEl, details, reasoningEl, answerEl } = beginStreamBot();
+        const { statusEl, entityExtractEl, details, reasoningEl, answerEl } =
+          beginStreamBot();
         let sseBuf = "";
+        let extractEntities = [];
+        let extractInfoTypes = [];
+        let turnCtx = null;
 
         try {
+          const lt = lastTurnFromMessages(conv.messages);
           const res = await fetch(API_ORIGIN + "/chat/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               message: msg,
               history_messages: conv.messages,
-              context_state: {},
+              context_state: lt ? { last_turn: lt } : {},
             }),
           });
           if (!res.ok) {
@@ -725,6 +804,42 @@
               }
               if (data.type === "status") {
                 statusEl.textContent = data.message || "";
+              } else if (data.type === "entity_extract") {
+                extractEntities = Array.isArray(data.entities)
+                  ? data.entities
+                  : [];
+                if (Array.isArray(data.info_type)) {
+                  extractInfoTypes = data.info_type
+                    .map((x) => String(x || "").trim())
+                    .filter(Boolean);
+                } else if (
+                  typeof data.info_type === "string" &&
+                  data.info_type.trim()
+                ) {
+                  extractInfoTypes = [data.info_type.trim()];
+                } else {
+                  extractInfoTypes = [];
+                }
+                entityExtractEl.textContent = formatEntityExtractLine(
+                  extractEntities,
+                  extractInfoTypes,
+                  (turnCtx && turnCtx.recommended_entity) || "",
+                );
+                entityExtractEl.style.display = "block";
+              } else if (data.type === "turn_context") {
+                turnCtx = {
+                  recommended_entity: String(
+                    data.recommended_entity || "",
+                  ).trim(),
+                  entities: Array.isArray(data.entities) ? data.entities : [],
+                  info_type: Array.isArray(data.info_type) ? data.info_type : [],
+                };
+                entityExtractEl.textContent = formatEntityExtractLine(
+                  extractEntities,
+                  extractInfoTypes,
+                  turnCtx.recommended_entity,
+                );
+                entityExtractEl.style.display = "block";
               } else if (data.type === "reasoning") {
                 reasoningEl.textContent += data.delta || "";
               } else if (data.type === "content") {
@@ -755,6 +870,12 @@
           const answerSaved = answerEl.textContent || "";
           conv.messages.push({
             type: "assistant",
+            entities: extractEntities,
+            info_type: extractInfoTypes,
+            recommended_entity: turnCtx
+              ? String(turnCtx.recommended_entity || "").trim()
+              : "",
+            turn_context: turnCtx,
             reasoning: reasoningSaved,
             answer: answerSaved,
           });
